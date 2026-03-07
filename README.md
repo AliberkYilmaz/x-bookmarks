@@ -18,7 +18,7 @@ Automatically syncs X (Twitter) bookmarks to Supabase and displays them on [alib
 |--------|-------|
 | `X_USERNAME` | Your X username |
 | `X_PASSWORD` | Your X password |
-| `SUPABASE_URL` | `https://xvedxjlsfxxgtegbjtws.supabase.co` |
+| `SUPABASE_URL` | `https://wcfjnwiqqkbdpmdrbzvd.supabase.co` |
 | `SUPABASE_SERVICE_KEY` | Supabase service role key |
 
 ### Manual Trigger
