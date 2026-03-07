@@ -1,0 +1,46 @@
+name: Sync X Bookmarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      triggered_by:
+        description: 'Who triggered this sync'
+        required: false
+        default: 'manual'
+        type: string
+
+jobs:
+  sync:
+    name: Sync Bookmarks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run sync
+        id: sync
+        run: python scripts/sync.py
+        env:
+          X_USERNAME: ${{ secrets.X_USERNAME }}
+          X_PASSWORD: ${{ secrets.X_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+
+      - name: Report result
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "✅ Sync completed successfully."
+          else
+            echo "❌ Sync failed. Check logs above."
+          fi
