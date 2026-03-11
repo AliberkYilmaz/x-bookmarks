@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Sync X bookmarks from twitter-cli into Supabase.
-Preserves the exact camelCase JSON shape from twitter-cli.
+Maps camelCase twitter-cli JSON → snake_case Supabase columns.
 """
 
 import json
@@ -38,9 +38,11 @@ TAG_KEYWORDS = {
     "finance": ["finance", "invest", "stock", "crypto", "bitcoin", "ethereum", "nft", "defi", "portfolio", "compound", "dividend", "etf", "wealth", "money", "saving", "budget", "return", "market cap"],
 }
 
+
 def fail(message: str, exit_code: int = 1) -> None:
     print(f"❌ {message}")
     sys.exit(exit_code)
+
 
 def auto_tag(text: str) -> list[str]:
     text_lower = text.lower()
@@ -52,16 +54,71 @@ def auto_tag(text: str) -> list[str]:
     sorted_tags = sorted(scores, key=scores.get, reverse=True)
     return sorted_tags[:3] or ["other"]
 
+
 def require_env_vars() -> None:
     missing = [name for name in REQUIRED_ENV_VARS if not os.getenv(name)]
     if missing:
         fail(f"Missing environment variables: {', '.join(missing)}")
+
 
 def build_tweet_url(tweet_id: str, author: dict) -> str | None:
     screen_name = author.get("screenName")
     if isinstance(screen_name, str) and screen_name:
         return f"https://x.com/{screen_name}/status/{tweet_id}"
     return None
+
+
+def extract_image_urls(media: list) -> list[str]:
+    """Extract image URLs from twitter-cli media array."""
+    if not isinstance(media, list):
+        return []
+    urls = []
+    for item in media:
+        if isinstance(item, dict):
+            url = item.get("url") or item.get("media_url_https") or item.get("mediaUrl")
+            if url:
+                urls.append(str(url))
+    return urls
+
+
+def map_tweet_to_record(tweet: dict, synced_at: str) -> dict:
+    """Map a twitter-cli tweet object to Supabase bookmarks row (snake_case)."""
+    tweet_id = str(tweet.get("id") or "").strip()
+    if not tweet_id:
+        raise ValueError("Missing id")
+
+    author = tweet.get("author") or {}
+    metrics = tweet.get("metrics") or {}
+
+    # Build tag source from text + article fields
+    tag_source = " ".join(filter(None, [
+        str(tweet.get("text") or ""),
+        str(tweet.get("articleTitle") or ""),
+        str(tweet.get("articleText") or ""),
+    ]))
+
+    tweet_url = build_tweet_url(tweet_id, author)
+    images = extract_image_urls(tweet.get("media") or [])
+
+    # Map to the actual Supabase table columns (snake_case)
+    return {
+        "tweet_id": tweet_id,
+        "text": str(tweet.get("text") or ""),
+        "author_name": str(author.get("name") or ""),
+        "author_handle": str(author.get("screenName") or author.get("screen_name") or ""),
+        "author_avatar_url": str(author.get("avatarUrl") or author.get("avatar_url") or ""),
+        "like_count": int(metrics.get("likeCount") or metrics.get("like_count") or 0),
+        "reply_count": int(metrics.get("replyCount") or metrics.get("reply_count") or 0),
+        "retweet_count": int(metrics.get("retweetCount") or metrics.get("retweet_count") or 0),
+        "posted_at": tweet.get("createdAt") or tweet.get("created_at") or None,
+        "lang": tweet.get("lang") or None,
+        "images": images if images else [],
+        "quoted_tweet": tweet.get("quotedTweet") or tweet.get("quoted_tweet") or None,
+        "tags": auto_tag(tag_source),
+        "tweet_url": tweet_url,
+        "synced_at": synced_at,
+    }
+
 
 def fetch_bookmarks_from_twitter_cli() -> list[dict]:
     twitter_binary = os.getenv("TWITTER_CLI_BIN", "twitter")
@@ -110,19 +167,21 @@ def fetch_bookmarks_from_twitter_cli() -> list[dict]:
     print(f"✅ twitter-cli returned {len(data)} bookmarks")
     return data
 
-def fetch_existing_ids(supabase: Client) -> set[str]:
+
+def fetch_existing_tweet_ids(supabase: Client) -> set[str]:
     try:
-        response = supabase.table("bookmarks").select("id").execute()
+        response = supabase.table("bookmarks").select("tweet_id").execute()
     except Exception as exc:
         fail(f"Could not query public.bookmarks in Supabase.\nDetails: {exc}")
-    return {str(row["id"]) for row in (response.data or []) if row.get("id")}
+    return {str(row["tweet_id"]) for row in (response.data or []) if row.get("tweet_id")}
+
 
 def upsert_to_supabase(supabase: Client, records: list[dict]) -> tuple[int, int]:
     if not records:
         return (0, 0)
 
-    existing_ids = fetch_existing_ids(supabase)
-    new_count = sum(1 for record in records if record["id"] not in existing_ids)
+    existing_ids = fetch_existing_tweet_ids(supabase)
+    new_count = sum(1 for r in records if r["tweet_id"] not in existing_ids)
 
     written = 0
     batch_size = 50
@@ -130,13 +189,14 @@ def upsert_to_supabase(supabase: Client, records: list[dict]) -> tuple[int, int]
         batch = records[index : index + batch_size]
         batch_number = (index // batch_size) + 1
         try:
-            supabase.table("bookmarks").upsert(batch, on_conflict="id").execute()
+            supabase.table("bookmarks").upsert(batch, on_conflict="tweet_id").execute()
             written += len(batch)
             print(f"  ✅ Upserted batch {batch_number}: {len(batch)} records")
         except Exception as exc:
             fail(f"Supabase upsert failed for batch {batch_number}.\nDetails: {exc}")
 
     return (new_count, written)
+
 
 def main() -> None:
     require_env_vars()
@@ -148,30 +208,14 @@ def main() -> None:
         print("⚠️  twitter-cli returned zero bookmarks; nothing to sync.")
         return
 
-    print("🔄 Normalizing bookmarks for Supabase...")
+    print("🔄 Mapping bookmarks to Supabase schema...")
     synced_at = datetime.now(timezone.utc).isoformat()
     records = []
     skipped = 0
 
     for tweet in bookmarks:
         try:
-            tweet_id = str(tweet.get("id") or "").strip()
-            if not tweet_id:
-                raise ValueError("Missing id")
-            
-            # Keep raw shape, just enrich with our 3 metadata fields
-            record = dict(tweet)
-            
-            tag_source = " ".join(filter(None, [
-                str(tweet.get("text") or ""),
-                str(tweet.get("articleTitle") or ""),
-                str(tweet.get("articleText") or "")
-            ]))
-            
-            record["tags"] = auto_tag(tag_source)
-            record["tweetUrl"] = build_tweet_url(tweet_id, tweet.get("author", {}))
-            record["syncedAt"] = synced_at
-            
+            record = map_tweet_to_record(tweet, synced_at)
             records.append(record)
         except Exception as exc:
             skipped += 1
@@ -186,6 +230,7 @@ def main() -> None:
     new_count, written = upsert_to_supabase(supabase, records)
 
     print(f"\n🎉 Done! Processed {len(bookmarks)} bookmarks, upserted {written} rows, {new_count} of them new.")
+
 
 if __name__ == "__main__":
     main()

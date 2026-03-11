@@ -1,34 +1,32 @@
--- Replaces the previous twikit-shaped bookmarks table.
--- Run this before the first twitter-cli sync.
+-- Supabase bookmarks table for x-bookmarks sync.
+-- Matches the actual deployed table schema (snake_case columns).
 
 begin;
 
 drop table if exists public.bookmarks;
 
 create table public.bookmarks (
-  "id" text primary key,
-  "text" text not null,
-  "author" jsonb not null,
-  "metrics" jsonb not null,
-  "createdAt" text not null,
-  "media" jsonb not null default '[]'::jsonb,
-  "urls" jsonb not null default '[]'::jsonb,
-  "isRetweet" boolean not null default false,
-  "retweetedBy" text,
-  "lang" text,
-  "score" double precision,
-  "articleTitle" text,
-  "articleText" text,
-  "quotedTweet" jsonb,
-  
-  -- Derived metadata
-  "tags" text[] not null default '{}'::text[],
-  "tweetUrl" text,
-  "syncedAt" timestamptz not null default timezone('utc', now())
+  id             uuid primary key default gen_random_uuid(),
+  tweet_id       text unique not null,
+  text           text,
+  author_name    text,
+  author_handle  text,
+  author_avatar_url text,
+  like_count     integer not null default 0,
+  reply_count    integer not null default 0,
+  retweet_count  integer not null default 0,
+  posted_at      timestamptz,
+  lang           text,
+  images         text[] not null default '{}',
+  quoted_tweet   jsonb,
+  tags           text[] not null default '{}',
+  tweet_url      text,
+  synced_at      timestamptz not null default now()
 );
 
-create index "bookmarks_syncedAt_idx" on public.bookmarks ("syncedAt" desc);
-create index "bookmarks_tags_idx" on public.bookmarks using gin ("tags");
+create index bookmarks_synced_at_idx on public.bookmarks (synced_at desc);
+create index bookmarks_tags_idx on public.bookmarks using gin (tags);
+create unique index bookmarks_tweet_id_idx on public.bookmarks (tweet_id);
 
 alter table public.bookmarks enable row level security;
 
