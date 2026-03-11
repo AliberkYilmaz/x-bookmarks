@@ -29,6 +29,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # NOTE: twitter-cli requires browser cookie-based auth (auth_token + ct0).
+      # The repo currently has X_USERNAME and X_PASSWORD secrets, but these
+      # cannot be used directly — twitter-cli does not support username/password login.
+      # To fix: log into X in a browser, extract auth_token and ct0 cookies,
+      # then add them as TWITTER_AUTH_TOKEN and TWITTER_CT0 repo secrets.
       - name: Run sync
         id: sync
         run: python scripts/sync.py
