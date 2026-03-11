@@ -30,4 +30,16 @@ create table public.bookmarks (
 create index "bookmarks_syncedAt_idx" on public.bookmarks ("syncedAt" desc);
 create index "bookmarks_tags_idx" on public.bookmarks using gin ("tags");
 
+alter table public.bookmarks enable row level security;
+
+grant select on public.bookmarks to anon, authenticated;
+grant all privileges on public.bookmarks to service_role;
+
+drop policy if exists "Public can read bookmarks" on public.bookmarks;
+create policy "Public can read bookmarks"
+on public.bookmarks
+for select
+to anon, authenticated
+using (true);
+
 commit;
